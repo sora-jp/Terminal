@@ -11,6 +11,7 @@ using MetroFramework.Forms;
 using MetroFramework;
 using MetroFramework.Components;
 using System.Threading;
+using System.Diagnostics;
 
 namespace Terminal
 {
@@ -34,7 +35,6 @@ namespace Terminal
             console.SelectionChanged += OnSelectionChange;
             console.KeyPress += OnKeyPressed;
             console.KeyDown += OnKeyDown;
-            //console. = console.BackColor;
         }
 
         private void OnKeyDown(object sender, KeyEventArgs e)
@@ -48,13 +48,15 @@ namespace Terminal
                 MessageBox.Show("Command: \"" + currentCommand + "\" with arguments: \"" + currentCommandArgs + "\"");
                 currentCommandString = "";
 
-                if (currentCommand == "echo")
-                {
-                    TerminalWriteLine("Echo: " + currentCommandArgs, true);
-                    TerminalWrite("ROOT§" + Environment.MachineName + "> ");
-                }
+                //if (currentCommand == "echo")
+                //{
+                //    TerminalWriteLine("Echo: " + currentCommandArgs, true);
+                //    TerminalWrite("ROOT§" + Environment.MachineName + "> ");
+                //}
 
-                //TODO: Add launching commands here...
+                Process currentCommandProcess = Process.Start(new ProcessStartInfo(currentCommand, currentCommandArgs) { RedirectStandardInput = true, RedirectStandardOutput = true, UseShellExecute = false });
+
+                //TODO: Add support for launching commands here...
             }
         }
 
@@ -67,7 +69,6 @@ namespace Terminal
                 return;
             }
             currentCommandString += e.KeyChar;
-            //MessageBox.Show(currentCommand);
         }
 
         private void OnSelectionChange(object sender, EventArgs e)
