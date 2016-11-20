@@ -54,7 +54,7 @@ namespace Terminal
                     TerminalWrite("ROOT§" + Environment.MachineName + "> ");
                 }
 
-                //TODO: Add launching commands here...
+                //TODO: Add support for launching commands here...
             }
         }
 
