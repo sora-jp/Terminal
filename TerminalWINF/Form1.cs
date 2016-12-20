@@ -12,6 +12,8 @@ using MetroFramework;
 using MetroFramework.Components;
 using System.Threading;
 using System.Diagnostics;
+using TerminalAPI;
+using Message = TerminalAPI.Message;
 
 namespace Terminal
 {
@@ -23,6 +25,13 @@ namespace Terminal
         string currentCommandArgs;
         
         Thread workerThread;
+        Thread commandWorkerThread;
+        Process currentCommandProcess;
+
+        public bool pendingRead;
+        public bool pendingReadLine;
+
+        string currentReadLineString;
 
         public Form1()
         {
@@ -43,16 +52,47 @@ namespace Terminal
             
             workerThread = new Thread(() => { lock (console) {if (console.SelectionStart == console.TextLength && console.SelectionLength == 0) { console.SelectionProtected = false; }} });
             workerThread.Start();
+
+            commandWorkerThread = new Thread(() => 
+            {
+                Message m = PipeManager.RecieveMessage();
+                switch (m.messageType)
+                {
+                    case MessageType.Print:
+                        TerminalWrite(m.data);
+                        break;
+                    case MessageType.PrintLn:
+                        TerminalWriteLine(m.data, false);
+                        break;
+                    case MessageType.Read:
+                        pendingRead = true;
+                        break;
+                    case MessageType.ReadLine:
+                        pendingReadLine = true;
+                        break;
+                    case MessageType.SetColorBG:
+                        break;
+                    case MessageType.SetColorFG:
+                        break;
+                    default:
+                        break;
+                }
+            });
         }
 
         private void OnKeyDown(object sender, KeyEventArgs e)
         {
+            if (pendingRead)
+            {
+                PipeManager.SendMessage
+            }
+
             if (e.KeyCode == Keys.Enter)
             {
                 e.Handled = true;
                 string[] data = currentCommandString.Split(new char[] { ' ' }, 2);
                 currentCommand = data[0];
-                currentCommandArgs = data[1];
+                currentCommandArgs = data.Length > 1 ? data[1] : "";
                 MessageBox.Show("Command: \"" + currentCommand + "\" with arguments: \"" + currentCommandArgs + "\"");
                 currentCommandString = "";
 
@@ -62,14 +102,32 @@ namespace Terminal
                 //    TerminalWrite("ROOT§" + Environment.MachineName + "> ");
                 //}
 
-                Process currentCommandProcess = Process.Start(new ProcessStartInfo(currentCommand, currentCommandArgs) { RedirectStandardInput = true, RedirectStandardOutput = true, UseShellExecute = false });
-
-                //TODO: Add support for launching commands here...
+                currentCommandProcess = Process.Start(new ProcessStartInfo(currentCommand, currentCommandArgs) { RedirectStandardInput = true, RedirectStandardOutput = true, UseShellExecute = false });                //TODO: Add support for launching commands here...
             }
         }
 
         private void OnKeyPressed(object sender, KeyPressEventArgs e)
         {
+            if (pendingReadLine && currentCommandProcess != null)
+            {
+                if (!currentCommandProcess.HasExited)
+                {
+                    if (pendingReadLine)
+                    {
+                        if (e.KeyChar == '\n')
+                        {
+                            PipeManager.SendMessage(new Message(MessageType.ReadLineResponse, currentReadLineString), currentCommandProcess);
+                            
+                        }
+                        else
+                        {
+                            currentReadLineString += e.KeyChar.ToString();
+                        }
+                    }
+                    //e.Handled = true;
+                    return;
+                }
+            }
             if (currentCommandString == null) currentCommandString = "";
             if (e.KeyChar == '\b' && currentCommandString.Length > 0)
             {
@@ -91,7 +149,10 @@ namespace Terminal
 
         private void OnCloseForm(object sender, FormClosingEventArgs e)
         {
-            workerThread.Stop();
+            workerThread.Abort();
+            commandWorkerThread.Abort();
+
+            currentCommandProcess?.Kill();
         }
 
         void TerminalWriteLine(string toWrite, bool newLineBefore)
