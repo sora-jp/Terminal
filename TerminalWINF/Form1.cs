@@ -21,10 +21,15 @@ namespace Terminal
 
         string currentCommand;
         string currentCommandArgs;
+        
+        Thread workerThread;
 
         public Form1()
         {
             InitializeComponent();
+            
+            CheckForIllegalCrossThreadCalls = false;
+            
             StyleManager = new MetroStyleManager();
             StyleManager.Theme = MetroThemeStyle.Dark;
             StyleManager.Style = MetroColorStyle.Black;
@@ -35,6 +40,9 @@ namespace Terminal
             console.SelectionChanged += OnSelectionChange;
             console.KeyPress += OnKeyPressed;
             console.KeyDown += OnKeyDown;
+            
+            workerThread = new Thread(() => { lock (console) {if (console.SelectionStart == console.TextLength && console.SelectionLength == 0) { console.SelectionProtected = false; }} });
+            workerThread.Start();
         }
 
         private void OnKeyDown(object sender, KeyEventArgs e)
@@ -73,26 +81,35 @@ namespace Terminal
 
         private void OnSelectionChange(object sender, EventArgs e)
         {
-            console.SelectionStart = console.TextLength;
-            console.SelectionLength = 0;
-            console.SelectionProtected = false;
+            lock (console) 
+            {
+                console.SelectionStart = console.TextLength;
+                console.SelectionLength = 0;
+                console.SelectionProtected = false;
+            }
         }
 
         private void OnCloseForm(object sender, FormClosingEventArgs e)
         {
-            
+            workerThread.Stop();
         }
 
         void TerminalWriteLine(string toWrite, bool newLineBefore)
         {
-            console.Text += (newLineBefore ? "\n" : "") + toWrite + "\n";
-            ProtectAllConsoleText();
+            lock (console) 
+            {
+                console.Text += (newLineBefore ? "\n" : "") + toWrite + "\n";
+                ProtectAllConsoleText();
+            }
         }
 
         void TerminalWrite(string toWrite)
         {
-            console.Text += toWrite;
-            ProtectAllConsoleText();
+            lock (console)
+            {
+                console.Text += toWrite;
+                ProtectAllConsoleText();
+            }
         }
 
         void ProtectAllConsoleText()
