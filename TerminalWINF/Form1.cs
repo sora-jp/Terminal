@@ -24,12 +24,14 @@ namespace Terminal
         string currentCommand;
         string currentCommandArgs;
         
-        Thread workerThread;
+        //Thread workerThread;
         Thread commandWorkerThread;
         Process currentCommandProcess;
 
         public bool pendingRead;
+        public bool cancelKeyPress;
         public bool pendingReadLine;
+        public bool commandRunning;
 
         string currentReadLineString;
 
@@ -37,11 +39,13 @@ namespace Terminal
         {
             InitializeComponent();
             
-            CheckForIllegalCrossThreadCalls = false;
+            CheckForIllegalCrossThreadCalls = true;
             
             StyleManager = new MetroStyleManager();
             StyleManager.Theme = MetroThemeStyle.Dark;
             StyleManager.Style = MetroColorStyle.Black;
+
+            console.Focus();
 
             TerminalWriteLine("Terminal v 1.0.1r2\nCopyright 2016 TheCoderPro\n", false);
             TerminalWrite("ROOT§" + Environment.MachineName + "> ");
@@ -49,52 +53,73 @@ namespace Terminal
             console.SelectionChanged += OnSelectionChange;
             console.KeyPress += OnKeyPressed;
             console.KeyDown += OnKeyDown;
-            
-            workerThread = new Thread(() => { lock (console) {if (console.SelectionStart == console.TextLength && console.SelectionLength == 0) { console.SelectionProtected = false; }} });
-            workerThread.Start();
+            GotFocus += OnRecievedFocus;
+            Activated += OnRecievedFocus;        
 
             commandWorkerThread = new Thread(() => 
             {
-                Message m = PipeManager.RecieveMessage();
-                switch (m.messageType)
+                Debug.WriteLine("WorkerThread was started.");
+                while (!currentCommandProcess.HasExited)
                 {
-                    case MessageType.Print:
-                        TerminalWrite(m.data);
-                        break;
-                    case MessageType.PrintLn:
-                        TerminalWriteLine(m.data, false);
-                        break;
-                    case MessageType.Read:
-                        pendingRead = true;
-                        break;
-                    case MessageType.ReadLine:
-                        pendingReadLine = true;
-                        break;
-                    case MessageType.SetColorBG:
-                        break;
-                    case MessageType.SetColorFG:
-                        break;
-                    default:
-                        break;
+                    Debug.WriteLine("WorkerThread is successfully running.");
+                    Message m = PipeManager.RecieveMessage(currentCommandProcess);
+                    switch (m.messageType)
+                    {
+                        case MessageType.Print:
+                            TerminalWrite(m.data);
+                            break;
+                        case MessageType.PrintLn:
+                            TerminalWriteLine(m.data, false);
+                            break;
+                        case MessageType.Read:
+                            pendingRead = true;
+                            cancelKeyPress = m.data == "0" ? false : true;
+                            break;
+                        case MessageType.ReadLine:
+                            pendingReadLine = true;
+                            break;
+                        case MessageType.SetColorBG:
+                            break;
+                        case MessageType.SetColorFG:
+                            break;
+                        case MessageType.Clear:
+                            Clear();
+                            break;
+                        default:
+                            break;
+                    }
                 }
+                TerminalWrite("\nROOT§" + Environment.MachineName + "> ");
+                commandRunning = false;
             });
+        }
+
+        private void OnRecievedFocus(object sender, EventArgs e)
+        {
+            console.Focus();
         }
 
         private void OnKeyDown(object sender, KeyEventArgs e)
         {
             if (pendingRead)
             {
-                PipeManager.SendMessage
+                PipeManager.SendMessage(new Message(MessageType.ReadResponse, ((int)e.KeyCode).ToString()), currentCommandProcess);
+                pendingRead = false;
+                e.Handled = true;
+                e.SuppressKeyPress = cancelKeyPress;
+                cancelKeyPress = false;
+                return;
             }
 
-            if (e.KeyCode == Keys.Enter)
+            if (e.KeyCode == Keys.Enter && !commandRunning)
             {
-                e.Handled = true;
+                //e.Handled = true;
                 string[] data = currentCommandString.Split(new char[] { ' ' }, 2);
                 currentCommand = data[0];
                 currentCommandArgs = data.Length > 1 ? data[1] : "";
-                MessageBox.Show("Command: \"" + currentCommand + "\" with arguments: \"" + currentCommandArgs + "\"");
+                //MessageBox.Show("Command: \"" + currentCommand + "\" with arguments: \"" + currentCommandArgs + "\"");
                 currentCommandString = "";
+                currentCommandArgs = "";
 
                 //if (currentCommand == "echo")
                 //{
@@ -102,8 +127,12 @@ namespace Terminal
                 //    TerminalWrite("ROOT§" + Environment.MachineName + "> ");
                 //}
 
-                currentCommandProcess = Process.Start(new ProcessStartInfo(currentCommand, currentCommandArgs) { RedirectStandardInput = true, RedirectStandardOutput = true, UseShellExecute = false });                //TODO: Add support for launching commands here...
+                currentCommandProcess = Process.Start(new ProcessStartInfo(currentCommand, currentCommandArgs) { RedirectStandardInput = true, RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true });
+                commandRunning = true;
+                commandWorkerThread.Start();
             }
+
+            //MessageBox.Show("Keys: " + e.KeyData + " | ConsoleKey: " + ((ConsoleKey)Enum.Parse(typeof(ConsoleKey), e.KeyValue.ToString())).ToString());
         }
 
         private void OnKeyPressed(object sender, KeyPressEventArgs e)
@@ -117,7 +146,8 @@ namespace Terminal
                         if (e.KeyChar == '\n')
                         {
                             PipeManager.SendMessage(new Message(MessageType.ReadLineResponse, currentReadLineString), currentCommandProcess);
-                            
+                            pendingReadLine = false;
+                            currentReadLineString = "";
                         }
                         else
                         {
@@ -139,38 +169,41 @@ namespace Terminal
 
         private void OnSelectionChange(object sender, EventArgs e)
         {
-            lock (console) 
-            {
-                console.SelectionStart = console.TextLength;
-                console.SelectionLength = 0;
-                console.SelectionProtected = false;
-            }
+            console.SelectionStart = console.TextLength;
+            console.SelectionLength = 0;
+            console.SelectionProtected = false;
         }
 
         private void OnCloseForm(object sender, FormClosingEventArgs e)
         {
-            workerThread.Abort();
-            commandWorkerThread.Abort();
+            //workerThread.Abort();
+            commandWorkerThread?.Abort();
 
             currentCommandProcess?.Kill();
         }
 
         void TerminalWriteLine(string toWrite, bool newLineBefore)
         {
-            lock (console) 
-            {
-                console.Text += (newLineBefore ? "\n" : "") + toWrite + "\n";
-                ProtectAllConsoleText();
-            }
+            if (!console.InvokeRequired) { terminalWriteLine(toWrite, newLineBefore); return; }
+            Invoke((Action)(() => { TerminalWriteLine(toWrite, newLineBefore); }));
+        }
+
+        void terminalWriteLine(string toWrite, bool newLineBefore)
+        {
+            console.Text += (newLineBefore ? "\n" : "") + toWrite + "\n";
+            ProtectAllConsoleText();
         }
 
         void TerminalWrite(string toWrite)
         {
-            lock (console)
-            {
-                console.Text += toWrite;
-                ProtectAllConsoleText();
-            }
+            if (!console.InvokeRequired) { terminalWrite(toWrite); return; }
+            Invoke((Action)(() => { TerminalWrite(toWrite); }));
+        }
+
+        void terminalWrite(string toWrite)
+        {
+            console.Text += toWrite;
+            ProtectAllConsoleText();
         }
 
         void ProtectAllConsoleText()
@@ -181,6 +214,16 @@ namespace Terminal
             console.SelectionLength = 0;
             console.SelectionStart = console.TextLength;
             console.SelectionProtected = false;
+        }
+
+        void Clear()
+        {
+            Invoke((Action)(() => { clear(); }));
+        }
+
+        void clear()
+        {
+            console.Text = "";
         }
     }
 }
